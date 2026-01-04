@@ -1,0 +1,6 @@
+matplotlib>=3.10.8
+mlflow>=3.8.1
+nltk>=3.9.2
+numpy>=2.4.0
+pandas>=2.3.3
+scikit-learn>=1.8.0
