@@ -28,4 +28,15 @@ TOKEN_REGEX = r"(\S+)"
 NB_FEATURES = 5000
 NB_ITERATIONS = 1000
 
+# =============================================================================
+# MLFLOW CONFIGURATION
+# =============================================================================
+
+# MLflow tracking configuration 
+MLFLOW_EXPERIMENT_NAME = "stock_market_ml"
+MLFLOW_TRACKING_URI = "./mlruns"
+
 MODEL_TYPES = ['linear']
+
+# Metrics to calculate
+METRICS = ["rmse", "mae", "r2", "mape"]

@@ -5,16 +5,20 @@ Pipeline to train NLP models for spam detection.
 import mlflow
 import datetime as time
 from pathlib import Path
+import warnings
 import sys
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
+from mlflow.models.signature import infer_signature
+from mlflow.data import from_pandas
+
 from pipeline.data_processor import DataProcessor
 from pipeline.feature_engineer import FeatureEngineer
 from pipeline.model_trainer import ModelTrainer
 from pipeline.evaluator import Evaluator
-from utils.config import DATA_PATH
+from utils.config import DATA_PATH, MODEL_TYPES, MLFLOW_EXPERIMENT_NAME, MLFLOW_TRACKING_URI
 
 from utils.parse_args import parse_arguments, parse_tags
 from utils.logger import get_logger, set_log_level, log_level_from_string, LogLevel
@@ -22,30 +26,20 @@ from utils.utils import format_time_elapsed
 
 def run_pipeline(args):
     """
-    Run the complete air quality prediction pipeline with inline MLflow integration.
+    Run the complete spam prediction pipeline with inline MLflow integration.
     """
-
     start_time = time.time()
-    #logger = get_logger()
-
-    #warnings.filterwarnings("ignore", category=ConvergenceWarning, module="sklearn")
-
-    #Reduce the amount of noise shown by mlflow
-    #warnings.filterwarnings("ignore", category=FutureWarning, module="mlflow")
-    #warnings.filterwarnings("ignore", category=UserWarning, module="mlflow")
-
-    # Creating Eperiment name (easier to separate this way)
-    
+    logger = get_logger()
 
     if args.mlflow:
         # Reduce the amount of noise shown by mlflow
-        #warnings.filterwarnings("ignore", category=FutureWarning, module="mlflow")
-        #warnings.filterwarnings("ignore", category=UserWarning, module="mlflow")
+        warnings.filterwarnings("ignore", category=FutureWarning, module="mlflow")
+        warnings.filterwarnings("ignore", category=UserWarning, module="mlflow")
 
         # Add MLflow setup and run start (Workshop 4)
             # Configuration MLflow simple
-        #mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        #mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
         # Create descriptive run name
         if args.run_name == '':
@@ -65,8 +59,6 @@ def run_pipeline(args):
         # PARAMS
         mlflow.log_param("model.type", args.model)
         mlflow.log_param("model.optimize", args.optimize)
-        mlflow.log_param("features.n_features", args.n_features)
-        mlflow.log_param("features.selection_method", args.method)
 
         # TAGS
         run_tags = parse_tags(args.run_tags)
@@ -79,30 +71,58 @@ def run_pipeline(args):
 
         mlflow.set_tag("dataset.path", DATA_PATH)
         mlflow.set_tag("pipeline.mlflow_enabled", args.mlflow)
-        mlflow.set_tag("mlflow.note.content", f"Pipeline with {args.model} model and {args.n_features} features")
+        mlflow.set_tag("mlflow.note.content", f"Pipeline with {args.model} model")
 
         run = mlflow.active_run()
-        #logger.info("Run started:", run is not None)
+        logger.info("Run started:", run is not None)
 
     try:
-        print("Run finished.")
-        #logger.info(" SPAM DETECTION ML PIPELINE")
+        logger.info(" SPAM DETECTION ML PIPELINE")
         
+        with logger.indent():
+            logger.info(f"Model: {args.model}")
+            logger.info(f"Optimization: {'Enabled' if args.optimize else 'Disabled'}")
+            logger.info(f"MLflow tracking: {'Enabled' if args.mlflow else 'Disabled'}")
+            if args.mlflow:
+                logger.info("Final model will be retrained on all data and registered in MLflow")
+
         processor = DataProcessor()
         engineer = FeatureEngineer()
         trainer = ModelTrainer()
         evaluator = Evaluator()
 
         # STEP 1
-        train_messages, train_labels, test_messages, test_labels = processor.load_and_preprocess()
+        logger.step("Data Loading and Preprocessing", 1)
+        with logger.timer("Data loading and preprocessing"):
+            train_messages, train_labels, test_messages, test_labels = processor.load_and_preprocess()
+
+        from mlflow.data import from_pandas
+
+        mlflow_train_messages = train_messages.to_frame(name="message")
+        mlflow_test_messages = test_messages.to_frame(name="message")
+
+
+
+        if mlflow.active_run():
+            # Log dataset inline (no separate function)
+            mlflow.log_input(from_pandas(mlflow_train_messages, source="training_data"), context="training")
+            mlflow.log_input(from_pandas(mlflow_test_messages, source="test_data"), context="test")
+
+            # Log dataset metrics
+            mlflow.log_metric("dataset.train_rows", (train_messages.shape[0]))
+            mlflow.log_metric("dataset.test_rows", (test_messages.shape[0]))
+
 
         # STEP 2
-        training_vectors, testing_vectors = engineer.encoder(train_messages, test_messages)
+        logger.step("Encoding", 2)
+        with logger.timer("Encoding"):
+            training_vectors, testing_vectors = engineer.encoder(train_messages, test_messages)
 
         # STEP 3
-        model = trainer.create_model(
-            model_type=args.model
-        )
+        if args.model in MODEL_TYPES:
+            model = trainer.create_model(args.model)
+        else:
+            raise Exception(f"The input model '{args.model}' is not recognised")
 
         model = trainer.train_single_model(model, args.model, training_vectors, train_labels)
 
@@ -110,10 +130,31 @@ def run_pipeline(args):
 
         metrics = evaluator.calculate_metrics(test_labels, predictions)
 
-        print("metrics", metrics)
-    
+        logger.info("Metrics : ")
+        logger.info("Recall : ", metrics['rec'])
+        logger.info("Precision : ", metrics['prec'])
+        logger.info("Accuracy : ", metrics['acc']) 
+
+        if mlflow.active_run():
+            # Log cross-validation results
+            mlflow.log_metric("precision", metrics['prec'])
+            mlflow.log_metric("recall", metrics['rec'])
+            mlflow.log_metric("accuracy", metrics['acc'])
+
+        model_name_mlflow = f"{args.model}_model"
+        signature = infer_signature(training_vectors, train_labels)
+        input_example = training_vectors[:5]
+
+        mlflow.sklearn.log_model(
+            model,
+            model_name_mlflow,
+            signature=signature,
+            input_example=input_example,
+        )
+
     finally:
-        print("Run finished.")
+        if mlflow.active_run():
+            mlflow.end_run()
         
 
 def main():

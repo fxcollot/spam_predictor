@@ -154,4 +154,8 @@ class Evaluator:
         prec = self.precision_score(testing_labels.values, predictions, 1)
         acc = self.accuracy_score(testing_labels.values, predictions, 1)
         
+        print("recccc : ", rec)
+        print("precccc : ", prec)
+        print("acccccc : ", acc)
+
         return {'rec': rec, 'prec': prec, 'acc': acc, 'mse': mse}
