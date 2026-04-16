@@ -1,5 +1,5 @@
 """
-Configuration for Stock Prediction ML Pipeline.
+Configuration for Spam Prediction ML Pipeline.
 
 This module contains all configuration constants used throughout
 the pipeline. 
